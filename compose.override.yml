@@ -1,0 +1,21 @@
+services:
+  plausible_db:
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d plausible_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  plausible_events_db:
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q 'Ok'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  plausible:
+    depends_on:
+      plausible_db:
+        condition: service_healthy
+      plausible_events_db:
+        condition: service_healthy
