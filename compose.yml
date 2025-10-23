@@ -5,10 +5,17 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
     environment:
+      - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=plausible_db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      start_period: 1m
+      test: ["CMD-SHELL","pg_isready -U postgres -d plausible_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    networks:
+      - dokploy-network
 
   plausible_events_db:
     image: clickhouse/clickhouse-server:24.12-alpine
@@ -17,11 +24,7 @@ services:
       - event-data:/var/lib/clickhouse
       - event-logs:/var/log/clickhouse-server
       - ./clickhouse/logs.xml:/etc/clickhouse-server/config.d/logs.xml:ro
-      # This makes ClickHouse bind to IPv4 only, since Docker doesn't enable IPv6 in bridge networks by default.
-      # Fixes "Listen [::]:9000 failed: Address family for hostname not supported" warnings.
       - ./clickhouse/ipv4-only.xml:/etc/clickhouse-server/config.d/ipv4-only.xml:ro
-      # This makes ClickHouse consume less resources, which is useful for small setups.
-      # https://clickhouse.com/docs/en/operations/tips#using-less-than-16gb-of-ram
       - ./clickhouse/low-resources.xml:/etc/clickhouse-server/config.d/low-resources.xml:ro
     ulimits:
       nofile:
@@ -30,8 +33,13 @@ services:
     environment:
       - CLICKHOUSE_SKIP_USER_SETUP=1
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 -O - http://127.0.0.1:8123/ping || exit 1"]
-      start_period: 1m
+      test: ["CMD-SHELL","wget --no-verbose --tries=1 -O - http://127.0.0.1:8123/ping | grep -q 'Ok'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    networks:
+      - dokploy-network
 
   plausible:
     image: ghcr.io/plausible/community-edition:v3.0.1
@@ -50,29 +58,24 @@ services:
         hard: 65535
     environment:
       - TMPDIR=/var/lib/plausible/tmp
-      # required: https://github.com/plausible/community-edition/wiki/configuration#required
       - BASE_URL=${BASE_URL}
       - SECRET_KEY_BASE=${SECRET_KEY_BASE}
-      # optional: https://github.com/plausible/community-edition/wiki/configuration#optional
-      # registration: https://github.com/plausible/community-edition/wiki/configuration#registration
+      # Explicit DB URLs so there’s no ambiguity:
+      - DATABASE_URL=postgres://postgres:postgres@plausible_db:5432/plausible_db
+      - CLICKHOUSE_DATABASE_URL=http://plausible_events_db:8123/plausible_events_db
+
+      # (Keep the rest for Dokploy to inject if you use them)
       - TOTP_VAULT_KEY
       - DISABLE_REGISTRATION
       - ENABLE_EMAIL_VERIFICATION
-      # web: https://github.com/plausible/community-edition/wiki/configuration#web
       - HTTP_PORT
       - HTTPS_PORT
-      # databases: https://github.com/plausible/community-edition/wiki/configuration#database
-      - DATABASE_URL
-      - CLICKHOUSE_DATABASE_URL
-      # Google: https://github.com/plausible/community-edition/wiki/configuration#google
       - GOOGLE_CLIENT_ID
       - GOOGLE_CLIENT_SECRET
-      # geolocation: https://github.com/plausible/community-edition/wiki/configuration#ip-geolocation
       - IP_GEOLOCATION_DB
       - GEONAMES_SOURCE_FILE
       - MAXMIND_LICENSE_KEY
       - MAXMIND_EDITION
-      # email: https://github.com/plausible/community-edition/wiki/configuration#email
       - MAILER_ADAPTER
       - MAILER_EMAIL
       - MAILER_NAME
@@ -87,9 +90,28 @@ services:
       - MAILGUN_BASE_URI
       - MANDRILL_API_KEY
       - SENDGRID_API_KEY
+    labels:
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.nicky-bruno-portfolio-plausible-wel2aw-51-web.rule=Host(`plausible.nickybruno.com`)
+      - traefik.http.routers.nicky-bruno-portfolio-plausible-wel2aw-51-web.entrypoints=web
+      - traefik.http.services.nicky-bruno-portfolio-plausible-wel2aw-51-web.loadbalancer.server.port=8000
+      - traefik.http.routers.nicky-bruno-portfolio-plausible-wel2aw-51-web.service=nicky-bruno-portfolio-plausible-wel2aw-51-web
+      - traefik.http.routers.nicky-bruno-portfolio-plausible-wel2aw-51-web.middlewares=redirect-to-https@file
+      - traefik.http.routers.nicky-bruno-portfolio-plausible-wel2aw-51-websecure.rule=Host(`plausible.nickybruno.com`)
+      - traefik.http.routers.nicky-bruno-portfolio-plausible-wel2aw-51-websecure.entrypoints=websecure
+      - traefik.http.services.nicky-bruno-portfolio-plausible-wel2aw-51-websecure.loadbalancer.server.port=8000
+      - traefik.http.routers.nicky-bruno-portfolio-plausible-wel2aw-51-websecure.service=nicky-bruno-portfolio-plausible-wel2aw-51-websecure
+      - traefik.http.routers.nicky-bruno-portfolio-plausible-wel2aw-51-websecure.tls.certresolver=letsencrypt
+      - traefik.enable=true
+    networks:
+      - dokploy-network
 
 volumes:
-  db-data:
-  event-data:
-  event-logs:
-  plausible-data:
+  db-data: {}
+  event-data: {}
+  event-logs: {}
+  plausible-data: {}
+
+networks:
+  dokploy-network:
+    external: true
